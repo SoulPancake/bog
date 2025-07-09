@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Daily Graph</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --text: #c9d1d9;
+      --accent: #58a6ff;
+      --overlay-bg: #0d1117;
+      --read-bg: #f5f5f5;
+      --read-text: #111;
+      --node-size: 20;
+    }
+    [data-theme="light"] {
+      --bg: #fff;
+      --text: #111;
+      --accent: #0050b3;
+      --overlay-bg: #fff;
+      --read-bg: #fff;
+      --read-text: #111;
+      --node-size: 20;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; height:100vh; overflow:hidden; }
+    #graph { width:100%; height:100%; }
+    .overlay { position: fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+    .summary-view, .read-view { display:none; pointer-events:auto; }
+    .overlay.open .summary-view { display:block; }
+    .overlay.read-mode .read-view { display:block; }
+    .summary-view {
+      position: absolute; top:20px; right:20px; width:320px; max-height:80%; overflow-y:auto;
+      background: var(--overlay-bg); color: var(--text);
+      border:1px solid var(--accent); border-radius:6px; box-shadow:0 8px 16px rgba(0,0,0,0.5);
+      padding:1rem; z-index:10;
+    }
+    .summary-view header { display:flex; align-items:center; }
+    .summary-view h2 { font-size:1.25rem; margin-left:0.5rem; }
+    .summary-view time { display:block; font-size:0.85rem; color:var(--accent); margin:0.5rem 0; }
+    .summary-view button { background:none; border:none; color:var(--text); cursor:pointer; font-size:1rem; }
+    .read-btn { margin-top:1rem; padding:0.5rem 1rem; background:var(--accent); color:#fff; border:none; border-radius:4px; cursor:pointer; }
+    .read-view {
+      position:absolute; top:0; left:0; width:100%; height:100%; background:var(--read-bg); color:var(--read-text);
+      overflow-y:auto; display:none; z-index:20;
+    }
+    .read-view header {
+      display:flex; align-items:center; padding:1rem 2rem;
+      background: var(--accent);
+      /* Use theme text color for title to match summary view */
+      color: var(--text);
+    }
+    .read-view header button { background:none; border:none; color:#fff; font-size:1rem; margin-right:1rem; cursor:pointer; }
+    .read-view .content { padding:2rem; max-width:800px; margin:auto; column-count:2; column-gap:2rem; line-height:1.6; }
+    @media(max-width:800px) { .read-view .content { column-count:1; } }
+  </style>
+</head>
+<body>
+  <div id="graph"></div>
+  <div id="overlay" class="overlay">
+    <div class="summary-view">
+      <header><button id="close-summary">←</button><h2 id="title"></h2></header>
+      <time id="date"></time>
+      <div id="content-summary"></div>
+      <button id="to-read" class="read-btn">Read Full Article</button>
+    </div>
+    <div class="read-view">
+      <header><button id="close-read">← Back</button><h2 id="read-title"></h2></header>
+      <div class="content" id="content-full"></div>
+    </div>
+  </div>
+
+  <!-- Article templates -->
+  <template id="article-1">
+    <h3>Breaking News</h3>
+    <p>In a stunning turn of events, market volatility reached unprecedented highs today, echoing uncertainties on the global stage.</p>
+    <p>Experts suggest that this trend may continue as geopolitical tensions influence economic forecasts.</p>
+  </template>
+  <!-- Repeat templates for articles 2-9 -->
+
+  <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+  <script src="https://unpkg.com/3d-force-graph@1.77.1/dist/3d-force-graph.min.js"></script>
+  <script>
+    const style = getComputedStyle(document.documentElement);
+    const bgColor = style.getPropertyValue('--bg').trim();
+    const nodeSize = parseFloat(style.getPropertyValue('--node-size'));
+    const colors = ['#58a6ff','#1f6feb','#388bfd','#79c0ff','#a5d6ff','#2c3e50','#238636','#39d353','#56d364'];
+
+    let currentNode = null;
+    let prevHover = null;
+    const overlay = document.getElementById('overlay');
+    const summaryView = overlay.querySelector('.summary-view');
+    const readView = overlay.querySelector('.read-view');
+    const titleEl = document.getElementById('title');
+    const dateEl = document.getElementById('date');
+    const contentSummary = document.getElementById('content-summary');
+    const toReadBtn = document.getElementById('to-read');
+    const closeSummary = document.getElementById('close-summary');
+    const closeRead = document.getElementById('close-read');
+    const readTitle = document.getElementById('read-title');
+    const fullContent = document.getElementById('content-full');
+
+    closeSummary.addEventListener('click', () => {
+      overlay.classList.remove('open');
+      summaryView.style.display = 'none';
+    });
+    toReadBtn.addEventListener('click', () => {
+      overlay.classList.add('read-mode');
+      summaryView.style.display = 'none';
+      readView.style.display = 'block';
+    });
+    closeRead.addEventListener('click', () => {
+      overlay.classList.remove('read-mode');
+      summaryView.style.display = 'block';
+      readView.style.display = 'none';
+    });
+
+    function showSummary(node) {
+      currentNode = node;
+      titleEl.textContent = node.name;
+      dateEl.textContent = new Date(node.date).toDateString();
+      const tpl = document.getElementById(`article-${node.id}`);
+      contentSummary.innerHTML = tpl ? tpl.content.querySelector('p').outerHTML : '';
+      overlay.classList.add('open');
+      summaryView.style.display = 'block';
+      readView.style.display = 'none';
+    }
+
+    function showFull() {
+      readTitle.textContent = currentNode.name;
+      const tpl = document.getElementById(`article-${currentNode.id}`);
+      fullContent.innerHTML = tpl ? tpl.innerHTML : '<p>No content.</p>';
+    }
+
+    ForceGraph3D()(document.getElementById('graph'))
+      .backgroundColor(bgColor)
+      .nodeLabel('name')
+      .nodeThreeObject(node => {
+        const size = 80;
+        const canvas = document.createElement('canvas'); canvas.width = canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = colors[(node.id-1)%colors.length];
+        ctx.beginPath(); ctx.arc(size/2,size/2,size/2,0,2*Math.PI); ctx.fill();
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) })
+        );
+        sprite.scale.set(nodeSize,nodeSize,nodeSize);
+        node.__sprite = sprite;
+        return sprite;
+      })
+      .onNodeHover(node => {
+        if (prevHover && prevHover.__sprite) prevHover.__sprite.scale.set(nodeSize,nodeSize,nodeSize);
+        if (node) node.__sprite.scale.set(nodeSize*1.5,nodeSize*1.5,nodeSize*1.5);
+        prevHover = node;
+      })
+      .onNodeClick(node => showSummary(node))
+      .graphData({
+        nodes:[
+          {id:1,name:'Breaking News',date:'2025-07-08'},
+          {id:2,name:'Tech Trends',date:'2025-07-07'},
+          {id:3,name:'Culture Beat',date:'2025-07-06'},
+          {id:4,name:'Health Tips',date:'2025-07-05'},
+          {id:5,name:'Travel Diary',date:'2025-07-04'},
+          {id:6,name:'Opinion Piece',date:'2025-07-03'},
+          {id:7,name:'Market Watch',date:'2025-07-02'},
+          {id:8,name:'Science Daily',date:'2025-07-01'},
+          {id:9,name:'Food Corner',date:'2025-06-30'}
+        ],
+        links:[
+          {source:1,target:2},{source:2,target:3},{source:3,target:4},{source:4,target:5},
+          {source:5,target:6},{source:6,target:7},{source:7,target:8},{source:8,target:9},
+          {source:9,target:1},{source:2,target:5}
+        ]
+      });
+  </script>
+</body>
+</html>
